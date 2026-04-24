@@ -230,6 +230,374 @@ function getZodiacIdx(dob) {
   return Math.floor(norm360(raw.sun - lahiriAyanamsa(JD)) / 30);
 }
 
+// ─── House Lords (sign rulers) ───────────────────────────────────────────────
+const SIGN_LORDS = ['Mars','Venus','Mercury','Moon','Sun','Mercury','Venus','Mars','Jupiter','Saturn','Saturn','Jupiter'];
+// Traditional lords (Mars for Scorpio, Jupiter for Pisces/Sagittarius, Saturn for Cap/Aquarius)
+
+function getHouseLord(lagnaSign, houseNum) {
+  const signIdx = (lagnaSign + houseNum - 1) % 12;
+  return SIGN_LORDS[signIdx];
+}
+
+// ─── Nakshatra Data ───────────────────────────────────────────────────────────
+const NAKSHATRAS = [
+  {name:"Ashwini",          short:"Ashwi", start:0,       lord:"Ketu"   },
+  {name:"Bharani",          short:"Bhar",  start:13.3333, lord:"Venus"  },
+  {name:"Krittika",         short:"Krit",  start:26.6667, lord:"Sun"    },
+  {name:"Rohini",           short:"Rohi",  start:40,      lord:"Moon"   },
+  {name:"Mrigashira",       short:"Mrig",  start:53.3333, lord:"Mars"   },
+  {name:"Ardra",            short:"Ardr",  start:66.6667, lord:"Rahu"   },
+  {name:"Punarvasu",        short:"Puna",  start:80,      lord:"Jupiter"},
+  {name:"Pushya",           short:"Push",  start:93.3333, lord:"Saturn" },
+  {name:"Ashlesha",         short:"Ashl",  start:106.6667,lord:"Mercury"},
+  {name:"Magha",            short:"Magh",  start:120,     lord:"Ketu"   },
+  {name:"Purva Phalguni",   short:"PPha",  start:133.3333,lord:"Venus"  },
+  {name:"Uttara Phalguni",  short:"UPha",  start:146.6667,lord:"Sun"    },
+  {name:"Hasta",            short:"Hast",  start:160,     lord:"Moon"   },
+  {name:"Chitra",           short:"Chit",  start:173.3333,lord:"Mars"   },
+  {name:"Swati",            short:"Swat",  start:186.6667,lord:"Rahu"   },
+  {name:"Vishakha",         short:"Vish",  start:200,     lord:"Jupiter"},
+  {name:"Anuradha",         short:"Anur",  start:213.3333,lord:"Saturn" },
+  {name:"Jyeshtha",         short:"Jyes",  start:226.6667,lord:"Mercury"},
+  {name:"Mula",             short:"Mula",  start:240,     lord:"Ketu"   },
+  {name:"Purva Ashadha",    short:"PAsh",  start:253.3333,lord:"Venus"  },
+  {name:"Uttara Ashadha",   short:"UAsh",  start:266.6667,lord:"Sun"    },
+  {name:"Shravana",         short:"Shra",  start:280,     lord:"Moon"   },
+  {name:"Dhanishta",        short:"Dhan",  start:293.3333,lord:"Mars"   },
+  {name:"Shatabhisha",      short:"Shat",  start:306.6667,lord:"Rahu"   },
+  {name:"Purva Bhadrapada", short:"PBha",  start:320,     lord:"Jupiter"},
+  {name:"Uttara Bhadrapada",short:"UBha",  start:333.3333,lord:"Saturn" },
+  {name:"Revati",           short:"Reva",  start:346.6667,lord:"Mercury"},
+];
+
+function getNakshatra(sid) {
+  const s = ((sid % 360) + 360) % 360;
+  const idx = Math.min(Math.floor(s / 13.3333), 26);
+  const nak = NAKSHATRAS[idx];
+  const pada = Math.min(Math.floor((s - nak.start) / (13.3333 / 4)) + 1, 4);
+  return { ...nak, pada };
+}
+
+// ─── Vimshottari Dasha Engine ────────────────────────────────────────────────
+const DASHA_ORDER  = ['Ketu','Venus','Sun','Moon','Mars','Rahu','Jupiter','Saturn','Mercury'];
+const DASHA_YEARS  = {Ketu:7,Venus:20,Sun:6,Moon:10,Mars:7,Rahu:18,Jupiter:16,Saturn:19,Mercury:17};
+const DASHA_COLORS = {Ketu:'#F87171',Venus:'#F472B6',Sun:'#FFD700',Moon:'#C8C8D4',Mars:'#FF6B4A',Rahu:'#CD853F',Jupiter:'#FFA040',Saturn:'#818CF8',Mercury:'#6EE7B7'};
+
+// Nakshatra lord sequence (matches 27 nakshatras, repeating DASHA_ORDER cycle)
+const NAK_LORDS = ['Ketu','Venus','Sun','Moon','Mars','Rahu','Jupiter','Saturn','Mercury',
+                   'Ketu','Venus','Sun','Moon','Mars','Rahu','Jupiter','Saturn','Mercury',
+                   'Ketu','Venus','Sun','Moon','Mars','Rahu','Jupiter','Saturn','Mercury'];
+
+function calcDashas(moonSid, birthDateStr, birthTimeStr) {
+  // Moon nakshatra index (0-based)
+  const nakIdx  = Math.min(Math.floor(moonSid / 13.3333), 26);
+  const nakStart = nakIdx * 13.3333;
+  const nakSpan  = 13.3333;
+  const elapsed  = (moonSid - nakStart) / nakSpan;   // fraction elapsed
+  const remaining = 1 - elapsed;
+
+  const startLord = NAK_LORDS[nakIdx];
+  const startIdx  = DASHA_ORDER.indexOf(startLord);
+  const startYears = DASHA_YEARS[startLord];
+
+  // Birth datetime
+  let birthMs;
+  try {
+    const [y,m,d] = birthDateStr.split('-').map(Number);
+    let h = 0, mn = 0;
+    if (birthTimeStr) { const [hh,mm] = birthTimeStr.split(':').map(Number); h=hh; mn=mm; }
+    birthMs = new Date(y, m-1, d, h, mn).getTime();
+  } catch(e) { birthMs = Date.now(); }
+
+  // The first dasha started before birth by (elapsed * startYears) years
+  const msPerYear = 365.25 * 24 * 3600 * 1000;
+  let currentStart = birthMs - elapsed * startYears * msPerYear;
+
+  const dashas = [];
+  for (let i = 0; i < 9; i++) {
+    const lord = DASHA_ORDER[(startIdx + i) % 9];
+    const years = DASHA_YEARS[lord];
+    const end = currentStart + years * msPerYear;
+    dashas.push({ lord, start: currentStart, end, years });
+    currentStart = end;
+  }
+
+  const now = Date.now();
+  const mahaIdx = dashas.findIndex(d => d.start <= now && now < d.end);
+  const maha = dashas[mahaIdx >= 0 ? mahaIdx : 0];
+
+  // Antardasha within mahadasha
+  const mahaLordIdx = DASHA_ORDER.indexOf(maha.lord);
+  let antarStart = maha.start;
+  const antardashas = [];
+  for (let i = 0; i < 9; i++) {
+    const aLord = DASHA_ORDER[(mahaLordIdx + i) % 9];
+    const aDuration = (maha.years * DASHA_YEARS[aLord] / 120) * msPerYear;
+    const aEnd = antarStart + aDuration;
+    antardashas.push({ lord: aLord, start: antarStart, end: aEnd });
+    antarStart = aEnd;
+  }
+  const antarIdx = antardashas.findIndex(d => d.start <= now && now < d.end);
+  const antar = antardashas[antarIdx >= 0 ? antarIdx : 0];
+
+  // Pratyantardasha within antardasha
+  const antarLordIdx = DASHA_ORDER.indexOf(antar.lord);
+  const antarDurMs = antar.end - antar.start;
+  let pratStart = antar.start;
+  const pratdashas = [];
+  for (let i = 0; i < 9; i++) {
+    const pLord = DASHA_ORDER[(antarLordIdx + i) % 9];
+    const pDuration = antarDurMs * DASHA_YEARS[pLord] / 120;
+    const pEnd = pratStart + pDuration;
+    pratdashas.push({ lord: pLord, start: pratStart, end: pEnd });
+    pratStart = pEnd;
+  }
+  const pratIdx = pratdashas.findIndex(d => d.start <= now && now < d.end);
+  const prat = pratdashas[pratIdx >= 0 ? pratIdx : 0];
+
+  const fmt = (ms) => {
+    const d = new Date(ms);
+    return `${d.getDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
+  };
+  const pct = (d) => Math.round(((now - d.start) / (d.end - d.start)) * 100);
+
+  return {
+    nakshatra: nakIdx,
+    startLord,
+    dashas: dashas.map(d => ({ ...d, startFmt: fmt(d.start), endFmt: fmt(d.end) })),
+    maha:  { ...maha,  startFmt: fmt(maha.start),  endFmt: fmt(maha.end),  pct: pct(maha)  },
+    antar: { ...antar, startFmt: fmt(antar.start), endFmt: fmt(antar.end), pct: pct(antar) },
+    prat:  { ...prat,  startFmt: fmt(prat.start),  endFmt: fmt(prat.end),  pct: pct(prat)  },
+    antardashas: antardashas.map(d => ({ ...d, startFmt: fmt(d.start), endFmt: fmt(d.end) })),
+  };
+}
+
+// City coordinates lookup
+
+
+const CITY_COORDS = {
+  "Delhi":[28.61,77.21],"Mumbai":[19.08,72.88],"Bangalore":[12.97,77.59],
+  "Chennai":[13.08,80.27],"Kolkata":[22.57,88.36],"Hyderabad":[17.38,78.47],
+  "Pune":[18.52,73.86],"Ahmedabad":[23.02,72.57],"Jaipur":[26.91,75.79],
+  "Lucknow":[26.85,80.95],"Kanpur":[26.45,80.35],"Nagpur":[21.15,79.09],
+  "Indore":[22.72,75.86],"Bhopal":[23.26,77.41],"Patna":[25.59,85.14],
+  "Vadodara":[22.31,73.18],"Surat":[21.17,72.83],"Coimbatore":[11.02,76.97],
+  "Kochi":[9.93,76.27],"Dehradun":[30.32,78.03],"Chandigarh":[30.73,76.78],
+  "Amritsar":[31.63,74.87],"Ludhiana":[30.90,75.85],"Agra":[27.18,78.01],
+  "Varanasi":[25.32,83.00],"Rewari":[28.19,76.62],"Gurgaon":[28.46,77.03],
+  "Noida":[28.54,77.39],"Faridabad":[28.41,77.31],"Rohtak":[28.89,76.61],
+  "Hisar":[29.15,75.72],"Panipat":[29.39,76.97],"Karnal":[29.69,76.99],
+  "Dubai":[25.20,55.27],"Abu Dhabi":[24.47,54.37],"Riyadh":[24.69,46.72],
+  "London":[51.51,-0.13],"New York":[40.71,-74.01],"Toronto":[43.65,-79.38],
+  "Singapore":[1.35,103.82],"Sydney":[-33.87,151.21],"Melbourne":[-37.81,144.96],
+  "Tokyo":[35.68,139.69],"Bangkok":[13.75,100.52],"Kuala Lumpur":[3.14,101.69],
+  "Kathmandu":[27.70,85.32],"Colombo":[6.93,79.85],"Dhaka":[23.72,90.41],
+  "Karachi":[24.86,67.01],"Lahore":[31.55,74.35],"Islamabad":[33.72,73.06],
+};
+
+function getPlanets(dob, tob, pobStr) {
+  const d = new Date(dob);
+  let hourIST = 12;
+  if (tob) { const [h,m] = tob.split(':').map(Number); hourIST = h + m/60; }
+  let hourUT = hourIST - 5.5;
+  let year = d.getUTCFullYear(), month = d.getUTCMonth()+1, day = d.getUTCDate();
+  if (hourUT < 0)  { hourUT += 24; day -= 1; }
+  if (hourUT >= 24  { name: "Sun", symbol: "☉", color: "#FFD700", glyph: "Su" },
+  { name: "Moon", symbol: "☽", color: "#C8C8D4", glyph: "Mo" },
+  { name: "Mars", symbol: "♂", color: "#FF6B4A", glyph: "Ma" },
+  { name: "Mercury", symbol: "☿", color: "#6EE7B7", glyph: "Me" },
+  { name: "Jupiter", symbol: "♃", color: "#FFA040", glyph: "Ju" },
+  { name: "Venus", symbol: "♀", color: "#F472B6", glyph: "Ve" },
+  { name: "Saturn", symbol: "♄", color: "#818CF8", glyph: "Sa" },
+  { name: "Rahu", symbol: "☊", color: "#CD853F", glyph: "Ra" },
+  { name: "Ketu", symbol: "☋", color: "#F87171", glyph: "Ke" },
+];
+
+const LIFE_AREAS = ["Career", "Finance", "Health", "Love", "Relationships", "Peace of Mind", "Spiritual Growth", "Education"];
+
+const REMEDIES = {
+  Career: [
+    { name: "Surya Japa", mantra: "Om Hraam Hreem Hraum Sah Suryaya Namah", count: 108, deity: "Surya Dev", benefit: "Career growth & authority" },
+    { name: "Ganesha Vandana", mantra: "Om Gam Ganapataye Namah", count: 21, deity: "Ganesha", benefit: "Remove career obstacles" },
+  ],
+  Finance: [
+    { name: "Lakshmi Stuti", mantra: "Om Shreem Mahalakshmiyei Namah", count: 108, deity: "Lakshmi Devi", benefit: "Wealth & prosperity" },
+    { name: "Kubera Mantra", mantra: "Om Yakshaya Kuberaya Vaishravanaya Namah", count: 11, deity: "Kubera", benefit: "Financial abundance" },
+  ],
+  Health: [
+    { name: "Maha Mrityunjaya", mantra: "Om Tryambakam Yajamahe Sugandhim Pushtivardhanam Urvarukamiva Bandhanan Mrityormuksheeya Mamritat", count: 108, deity: "Shiva", benefit: "Healing & longevity" },
+    { name: "Dhanvantari Mantra", mantra: "Om Namo Bhagavate Vasudevaya Dhanvantaraye Amrita Kalasha Hastaya Namah", count: 21, deity: "Dhanvantari", benefit: "Physical wellbeing" },
+  ],
+  Love: [
+    { name: "Radha Krishna Mantra", mantra: "Om Kleem Krishnaya Namah", count: 108, deity: "Krishna", benefit: "Attract love & romance" },
+    { name: "Venus Beej Mantra", mantra: "Om Draam Dreem Droum Sah Shukraya Namah", count: 108, deity: "Shukra Dev", benefit: "Love & beauty" },
+  ],
+  Relationships: [
+    { name: "Parvati Mantra", mantra: "Om Hreem Shreem Parvatiputraya Namah", count: 108, deity: "Parvati", benefit: "Harmonious bonds" },
+    { name: "Satyanarayana Puja", mantra: "Om Namo Bhagavate Vasudevaya", count: 108, deity: "Vishnu", benefit: "Family harmony" },
+  ],
+  "Peace of Mind": [
+    { name: "Gayatri Mantra", mantra: "Om Bhur Bhuvah Swah Tat Savitur Varenyam Bhargo Devasya Dhimahi Dhiyo Yo Nah Prachodayat", count: 108, deity: "Gayatri Devi", benefit: "Clarity & inner peace" },
+    { name: "Shanti Path", mantra: "Om Shanti Shanti Shantihi", count: 21, deity: "Universal", benefit: "Deep stillness" },
+  ],
+  "Spiritual Growth": [
+    { name: "Panchakshara Mantra", mantra: "Om Namah Shivaya", count: 108, deity: "Shiva", benefit: "Spiritual awakening" },
+    { name: "Hare Krishna Mahamantra", mantra: "Hare Krishna Hare Krishna Krishna Krishna Hare Hare Hare Rama Hare Rama Rama Rama Hare Hare", count: 108, deity: "Krishna", benefit: "Divine connection" },
+  ],
+  Education: [
+    { name: "Saraswati Vandana", mantra: "Om Aim Saraswatyai Namah", count: 108, deity: "Saraswati", benefit: "Intelligence & learning" },
+    { name: "Budha Beej Mantra", mantra: "Om Braam Breem Broum Sah Budhaya Namah", count: 17, deity: "Budha Dev", benefit: "Memory & focus" },
+  ],
+};
+
+// ─── Real Vedic Astrology Engine (Meeus Keplerian Elements + Lahiri) ────────
+function toRad(d) { return d * Math.PI / 180; }
+function norm360(d) { return ((d % 360) + 360) % 360; }
+
+function julianDay(year, month, day, hourUT) {
+  if (month <= 2) { year -= 1; month += 12; }
+  const A = Math.floor(year / 100);
+  const B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25*(year+4716)) + Math.floor(30.6001*(month+1)) + day + hourUT/24 + B - 1524.5;
+}
+
+function lahiriAyanamsa(JD) {
+  const y = (JD - 2415020.0) / 365.25;
+  return 22.46047 + (50.2388475 * y) / 3600;
+}
+
+function solveKepler(M, e) {
+  let E = M;
+  for (let i = 0; i < 15; i++) E -= (E - e*Math.sin(E) - M) / (1 - e*Math.cos(E));
+  return E;
+}
+
+function helioXY(L0, dL, a, e, de, i0, di, O0, dO, w0, dw, T) {
+  const L   = norm360(L0 + dL*T);
+  const ec  = e + de*T;
+  const inc = toRad(i0 + di*T);
+  const OM  = toRad(norm360(O0 + dO*T));
+  const LP  = toRad(norm360(w0 + dw*T));
+  const om  = LP - OM;
+  const M   = toRad(norm360(L - norm360(w0 + dw*T)));
+  const E   = solveKepler(M, ec);
+  const nu  = 2*Math.atan2(Math.sqrt(1+ec)*Math.sin(E/2), Math.sqrt(1-ec)*Math.cos(E/2));
+  const r   = a*(1 - ec*Math.cos(E));
+  const x   = r*(Math.cos(OM)*Math.cos(nu+om) - Math.sin(OM)*Math.sin(nu+om)*Math.cos(inc));
+  const y   = r*(Math.sin(OM)*Math.cos(nu+om) + Math.cos(OM)*Math.sin(nu+om)*Math.cos(inc));
+  return { x, y, r };
+}
+
+function calcPlanetsRaw(JD) {
+  const T  = (JD - 2451545.0) / 36525;
+  const T2 = T * T;
+
+  // Sun (geocentric)
+  const Ms  = norm360(357.52911 + 35999.05029*T - 0.0001537*T2);
+  const Cr  = (1.914602-0.004817*T)*Math.sin(toRad(Ms)) + 0.019993*Math.sin(toRad(2*Ms)) + 0.000289*Math.sin(toRad(3*Ms));
+  const L0s = norm360(280.46646 + 36000.76983*T);
+  const sun = norm360(L0s + Cr);
+
+  // Moon
+  const Lm = norm360(218.3165 + 481267.8813*T);
+  const Mm = norm360(134.9634 + 477198.8676*T);
+  const Fm = norm360(93.2721  + 483202.0175*T);
+  const Dm = norm360(297.8502 + 445267.1115*T);
+  const moon = norm360(Lm
+    + 6.2886*Math.sin(toRad(Mm))  + 1.2740*Math.sin(toRad(2*Dm-Mm))
+    + 0.6583*Math.sin(toRad(2*Dm))+ 0.2136*Math.sin(toRad(2*Mm))
+    - 0.1851*Math.sin(toRad(Ms))  - 0.1143*Math.sin(toRad(2*Fm))
+    + 0.0588*Math.sin(toRad(2*Dm-2*Mm)));
+
+  // Rahu (mean lunar node, retrograde)
+  const rahu = norm360(125.0445 - 1934.1363*T + 0.002075*T2);
+  const ketu = norm360(rahu + 180);
+
+  // Earth heliocentric (for geocentric conversion)
+  const Re = 1.000140 - 0.016708*Math.cos(toRad(Ms)) - 0.000141*Math.cos(toRad(2*Ms));
+  const xe = Re * Math.cos(toRad(norm360(sun + 180)));
+  const ye = Re * Math.sin(toRad(norm360(sun + 180)));
+
+  // Keplerian elements (Meeus Table 33.a, J2000) — Mercury, Venus, Mars, Saturn
+  const ELEMS = {
+    merc: [252.250906,149472.6746358,0.38709927,0.20563593,0.00001906,7.00497902,-0.00594749,48.33076593,-0.12534081,77.45779628,0.16047689],
+    venu: [181.979801,58517.8156760, 0.72333566,0.00677672,-0.00004107,3.39467605,-0.00078890,76.67984255,-0.27769418,131.60246718,0.00268329],
+    mars: [355.433000,19140.2964471, 1.52371034,0.09339410, 0.00007882,1.84969142,-0.00813131,49.55953891,-0.29257343,336.04084002,0.44441088],
+    satu: [49.954244, 1222.1138488,  9.53667594,0.05386179,-0.00050991,2.48599187, 0.00193609,113.66242448,-0.28867794,92.59887831,-0.41897216],
+  };
+
+  const geoLon = (key) => {
+    const [L0,dL,a,e,de,i0,di,O0,dO,w0,dw] = ELEMS[key];
+    const { x, y } = helioXY(L0,dL,a,e,de,i0,di,O0,dO,w0,dw, T);
+    return norm360(Math.atan2(y - ye, x - xe) * 180 / Math.PI);
+  };
+
+  // Jupiter: VSOP87 truncated series (much more accurate than simple Kepler)
+  const tau = T / 10;
+  const vs = (terms) => terms.reduce((s,[A,B,C]) => s + A*Math.cos(B+C*tau), 0);
+  const JL0=[[59954691,0,0],[9695899,5.0619179,529.6909651],[573610,1.444062,1059.381930],[306389,5.417347,522.577418],[97178,4.14264,536.80451],[72903,3.64043,21.34065],[64264,3.41145,7.11355],[39806,2.29377,543.91820]];
+  const JL1=[[52993480757,0,0],[489741,4.220667,529.690965],[228919,6.026475,7.113547],[27655,4.57266,1059.38193]];
+  const JL2=[[47234,4.32148,529.69097],[38966,0,0],[30629,2.93021,7.11355]];
+  const JR0=[[520887429,0,0],[25209327,3.49108640,529.69096509],[610600,3.841154,1059.381930],[282029,2.574199,206.185548]];
+  const L_jup_hel = norm360(((vs(JL0)+vs(JL1)*tau+vs(JL2)*tau*tau)*1e-8)*180/Math.PI);
+  const R_jup = vs(JR0)*1e-8;
+  const xj = R_jup*Math.cos(toRad(L_jup_hel));
+  const yj = R_jup*Math.sin(toRad(L_jup_hel));
+  const jupi = norm360(Math.atan2(yj-ye, xj-xe)*180/Math.PI);
+
+  return {
+    sun, moon,
+    mars: geoLon('mars'),
+    merc: geoLon('merc'),
+    jupi,
+    venu: geoLon('venu'),
+    satu: geoLon('satu'),
+    rahu, ketu,
+  };
+}
+
+function calcLagna(JD, latDeg, lonDeg) {
+  const T   = (JD - 2451545.0) / 36525;
+  const GST = norm360(280.46061837 + 360.98564736629*(JD-2451545) + 0.000387933*T*T);
+  const LST = norm360(GST + lonDeg);
+  const eps = toRad(23.4393 - 0.013*T);
+  const ramc = toRad(LST), lat = toRad(latDeg);
+  const y = -Math.cos(ramc);
+  const x = Math.sin(ramc)*Math.cos(eps) + Math.tan(lat)*Math.sin(eps);
+  let asc = norm360(Math.atan2(y, x) * 180 / Math.PI);
+  if (Math.cos(ramc) > 0) asc = norm360(asc + 180);
+  return asc;
+}
+
+// Exaltation / Debilitation / Own sign status
+const PLANET_STATUS_MAP = {
+  sun:  { ex:0,  exd:10, de:6,  ded:10, own:[4]       },
+  moon: { ex:1,  exd:3,  de:7,  ded:3,  own:[3]       },
+  mars: { ex:9,  exd:28, de:3,  ded:28, own:[0,7]     },
+  merc: { ex:5,  exd:15, de:11, ded:15, own:[2,5]     },
+  jupi: { ex:3,  exd:5,  de:9,  ded:5,  own:[8,11]    },
+  venu: { ex:11, exd:27, de:5,  ded:27, own:[1,6]     },
+  satu: { ex:6,  exd:20, de:0,  ded:20, own:[9,10]    },
+  rahu: { ex:1,  exd:20, de:7,  ded:20, own:[]        },
+  ketu: { ex:7,  exd:20, de:1,  ded:20, own:[]        },
+};
+
+function getPlanetStatus(key, sign) {
+  const m = PLANET_STATUS_MAP[key];
+  if (!m) return null;
+  if (sign === m.ex) return 'exalted';
+  if (sign === m.de) return 'debilitated';
+  if (m.own.includes(sign)) return 'own';
+  return null;
+}
+
+function getZodiacIdx(dob) {
+  const d  = new Date(dob);
+  const JD = julianDay(d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate(), 12);
+  const raw = calcPlanetsRaw(JD);
+  return Math.floor(norm360(raw.sun - lahiriAyanamsa(JD)) / 30);
+}
+
 // ─── Nakshatra Data ───────────────────────────────────────────────────────────
 const NAKSHATRAS = [
   {name:"Ashwini",          short:"Ashwi", start:0,       lord:"Ketu"   },
